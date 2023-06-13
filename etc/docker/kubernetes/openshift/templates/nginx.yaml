@@ -1,0 +1,240 @@
+#########################################################################
+#      Copyright (C) 2020        Sebastian Francisco Colomar Bauza      #
+#      SPDX-License-Identifier:  GPL-2.0-only                           #
+#########################################################################
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  annotations:
+    description: >-
+      nginx
+    iconClass: icon-nginx
+    openshift.io/display-name: 'nginx'
+    openshift.io/provider-display-name: 'Sebastian Colomar'
+    samples.operator.openshift.io/version: 4.5.2
+    tags: 'nginx'
+    version: '${APP_VERSION}'
+  labels:
+    app: nginx
+    samples.operator.openshift.io/managed: 'true'
+  name: nginx
+  namespace: openshift
+message: 'NginX is now deployed.'
+objects:
+  -
+    apiVersion: v1
+    data:
+      nginx.conf: |
+        user nginx;
+        worker_processes auto;
+        error_log /var/log/nginx/error.log debug;
+        pid /var/run/nginx.pid;
+        events {
+          worker_connections 1024;
+        }
+        http {
+          include /etc/nginx/mime.types;
+          default_type application/octet-stream;
+          log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+            '$status $body_bytes_sent "$http_referer" '
+            '"$http_user_agent" "$http_x_forwarded_for"';
+          access_log /var/log/nginx/access.log  main;
+          sendfile on;
+          keepalive_timeout 65;
+          include /etc/nginx/conf.d/*.conf;
+        }
+    kind: ConfigMap
+    metadata:
+      name: nginx-cm
+  -
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: nginx-deploy
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          service: nginx-svc
+      template:
+        metadata:
+          labels:
+            service: nginx-svc
+        spec:
+          containers:
+          - 
+            image: secobau/nginx:${APP_VERSION}${APP_DIGEST}
+            livenessProbe:
+              httpGet:
+                path: /
+                port: 8080
+              initialDelaySeconds: 10
+            name: nginx-container
+            ports:
+              -
+                containerPort: 8080
+            readinessProbe:
+              httpGet:
+                path: /
+                port: 8080
+              initialDelaySeconds: 1
+            volumeMounts:
+            - 
+              mountPath: /var/log/nginx
+              name: nginx-logs
+            - 
+              mountPath: /etc/nginx/conf.d
+              name: default-conf
+              readOnly: true
+            - 
+              mountPath: /run/nginx/etc/nginx
+              name: nginx-conf
+              readOnly: true
+            -
+              mountPath: /var/cache/nginx
+              name: nginx-cache
+            -
+              mountPath: /var/run
+              name: nginx-run
+          volumes:
+          -
+            name: nginx-run
+            emptyDir: {}
+          -
+            name: nginx-cache
+            emptyDir: {}
+          - 
+            name: nginx-logs
+            emptyDir: {}
+          - 
+            name: default-conf
+            secret:
+              secretName: default-secret
+          - 
+            configMap:
+              name: nginx-cm
+            name: nginx-conf
+  -
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: nginx-netpol
+    spec:
+      podSelector:
+        matchLabels:
+          service: nginx-svc
+      ingress:
+        -
+          ports:
+            -
+              port: 8080
+  -
+    apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: nginx-route
+    spec:
+      port:
+        targetPort: 8080
+      tls:
+        insecureEdgeTerminationPolicy: Redirect
+        termination: edge
+      to:
+        kind: Service
+        name: nginx
+  -
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: default-secret
+    type: Opaque
+    stringData:
+      default.conf: |
+        server {
+            listen       8080;
+            #listen  [::]:8080;
+            server_name  localhost;
+            #charset koi8-r;
+            #access_log  /var/log/nginx/host.access.log  main;
+            location / {
+                root   /usr/share/nginx/html;
+                index  index.html index.htm;
+            }
+            #error_page  404              /404.html;
+            # redirect server error pages to the static page /50x.html
+            #
+            error_page   500 502 503 504  /50x.html;
+            location = /50x.html {
+                root   /usr/share/nginx/html;
+            }
+            # proxy the PHP scripts to Apache listening on 127.0.0.1:8080
+            #
+            #location ~ \.php$ {
+            #    proxy_pass   http://127.0.0.1;
+            #}
+            # pass the PHP scripts to FastCGI server listening on 127.0.0.1:9000
+            #
+            #location ~ \.php$ {
+            #    root           html;
+            #    fastcgi_pass   127.0.0.1:9000;
+            #    fastcgi_index  index.php;
+            #    fastcgi_param  SCRIPT_FILENAME  /scripts$fastcgi_script_name;
+            #    include        fastcgi_params;
+            #}
+            # deny access to .htaccess files, if Apache's document root
+            # concurs with nginx's one
+            #
+            #location ~ /\.ht {
+            #    deny  all;
+            #}
+        }
+  -
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: nginx
+    spec:
+      ports:
+      - 
+        port: 80
+        targetPort: 8080
+      selector:
+        service: nginx-svc
+parameters:
+  -
+    description: The application version.
+    displayName: Application Version
+    name: APP_VERSION
+    required: true
+    value: 'latest'
+  -
+    description: The application digest.
+    displayName: Application Digest
+    name: APP_DIGEST
+    required: false
+    value: ''
+  -
+    description: The amount of CPU each container is limited to use.
+    displayName: CPU limit
+    name: CPU_LIMIT
+    required: true
+    value: '0.001'
+  -
+    description: The amount of CPU to request for each container.
+    displayName: CPU request
+    name: CPU_REQUEST
+    required: true
+    value: '0.001'
+  -
+    description: The amount of memory each container is limited to use.
+    displayName: Memory limit
+    name: MEMORY_LIMIT
+    required: true
+    value: 32Mi
+  -
+    description: The amount of memory required for each container to run.
+    displayName: Memory request
+    name: MEMORY_REQUEST
+    required: true
+    value: 16Mi
+    
